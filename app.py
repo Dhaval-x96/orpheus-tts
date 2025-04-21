@@ -16,8 +16,11 @@ model = None
 def load_model():
     global model
     if model is None:
-        # Default to the finetuned model, but could be configurable
-        model = OrpheusModel(model_name="canopylabs/orpheus-tts-0.1-finetune-prod")
+        model = OrpheusModel(
+            model_name="canopylabs/orpheus-tts-0.1-finetune-prod",
+            gpu_memory_utilization=0.9,  # Higher value for A5000
+            max_model_len=98304  # 75% of original, should work with A5000
+        )
     return model
 
 @app.route('/health', methods=['GET'])
