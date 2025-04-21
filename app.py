@@ -5,7 +5,7 @@ import time
 import tempfile
 from flask import Flask, request, jsonify, send_file, Response, stream_with_context
 from flask_cors import CORS
-from orpheus_tts import OrpheusModel
+from ollama_tts import OrpheusOllama, AVAILABLE_VOICES
 
 app = Flask(__name__)
 CORS(app)
@@ -16,17 +16,29 @@ model = None
 def load_model():
     global model
     if model is None:
-        model = OrpheusModel(
-            model_name="canopylabs/orpheus-tts-0.1-finetune-prod",
-            gpu_memory_utilization=0.9,  # Higher value for A5000
-            max_model_len=98304  # 75% of original, should work with A5000
+        # Initialize using Ollama integration
+        model = OrpheusOllama(
+            model_name=os.getenv("ORPHEUS_MODEL_NAME", "orpheus"),
+            temperature=float(os.getenv("ORPHEUS_TEMPERATURE", "0.6")),
+            top_p=float(os.getenv("ORPHEUS_TOP_P", "0.9")),
+            repeat_penalty=float(os.getenv("ORPHEUS_REPEAT_PENALTY", "1.1")),
+            sample_rate=int(os.getenv("ORPHEUS_SAMPLE_RATE", "24000"))
         )
     return model
 
 @app.route('/health', methods=['GET'])
 def health_check():
     """Simple health check endpoint"""
-    return jsonify({"status": "healthy"})
+    try:
+        model = load_model()
+        connection_status = model.test_connection()
+        return jsonify({
+            "status": "healthy", 
+            "ollama_status": connection_status["status"],
+            "message": connection_status["message"]
+        })
+    except Exception as e:
+        return jsonify({"status": "unhealthy", "error": str(e)}), 500
 
 @app.route('/tts', methods=['POST'])
 def text_to_speech():
@@ -42,11 +54,6 @@ def text_to_speech():
     text = data['text']
     voice = data.get('voice', 'tara')  # Default voice is tara
     
-    # Optional LLM generation parameters
-    temperature = data.get('temperature', 1.0)
-    top_p = data.get('top_p', 0.9)
-    repetition_penalty = data.get('repetition_penalty', 1.1)  # Required for stable generations
-    
     # Load the model
     try:
         model = load_model()
@@ -57,32 +64,17 @@ def text_to_speech():
     try:
         start_time = time.monotonic()
         
-        # Generate speech from text
-        syn_tokens = model.generate_speech(
-            prompt=text,
+        # Generate speech (non-streaming)
+        audio_data = model.generate_speech(
+            text=text,
             voice=voice,
-            temperature=temperature,
-            top_p=top_p,
-            repetition_penalty=repetition_penalty
+            stream=False
         )
         
         # Create a temporary file to store the audio
         with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
             temp_filename = temp_file.name
-            
-            # Write the audio to the WAV file
-            with wave.open(temp_filename, "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(24000)
-                
-                # Combine all audio chunks
-                audio_data = bytearray()
-                for audio_chunk in syn_tokens:
-                    audio_data.extend(audio_chunk)
-                
-                # Write to file
-                wf.writeframes(audio_data)
+            temp_file.write(audio_data)
         
         end_time = time.monotonic()
         process_time = end_time - start_time
@@ -117,37 +109,19 @@ def stream_text_to_speech():
     text = data['text']
     voice = data.get('voice', 'tara')
     
-    # Optional LLM generation parameters
-    temperature = data.get('temperature', 1.0)
-    top_p = data.get('top_p', 0.9)
-    repetition_penalty = data.get('repetition_penalty', 1.1)
-    
     try:
         model = load_model()
         
         def generate():
-            # Start WAV header
-            buffer = io.BytesIO()
-            with wave.open(buffer, 'wb') as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(24000)
-                wf.writeframes(b'')  # Write empty frames to create header
-            
-            header = buffer.getvalue()
-            yield header  # Send WAV header first
-            
-            # Generate speech chunks and stream them
-            syn_tokens = model.generate_speech(
-                prompt=text,
+            # Generate and stream audio chunks
+            audio_chunks = model.generate_speech(
+                text=text,
                 voice=voice,
-                temperature=temperature,
-                top_p=top_p,
-                repetition_penalty=repetition_penalty
+                stream=True
             )
             
-            for audio_chunk in syn_tokens:
-                yield audio_chunk
+            for chunk in audio_chunks:
+                yield chunk
         
         return Response(stream_with_context(generate()), mimetype='audio/wav')
     
@@ -157,10 +131,9 @@ def stream_text_to_speech():
 @app.route('/voices', methods=['GET'])
 def get_voices():
     """Return list of available voices"""
-    # List of available voices from the documentation
+    # List of available voices
     voices = {
-        "english": ["tara", "leah", "jess", "leo", "dan", "mia", "zac", "zoe"],
-        # Could add multilingual voices here when using those models
+        "english": AVAILABLE_VOICES
     }
     return jsonify(voices)
 
@@ -177,4 +150,6 @@ if __name__ == '__main__':
     # Load model at startup
     load_model()
     # Run the Flask app
-    app.run(host='0.0.0.0', port=5000, debug=False) 
+    app.run(host=os.getenv("ORPHEUS_HOST", "0.0.0.0"), 
+            port=int(os.getenv("ORPHEUS_PORT", "5000")), 
+            debug=False) 
