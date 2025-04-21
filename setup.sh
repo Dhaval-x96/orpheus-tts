@@ -23,17 +23,21 @@ source venv/bin/activate
 echo "Upgrading pip..."
 pip install --upgrade pip
 
-# Install dependencies
-echo "Installing dependencies..."
-pip install orpheus-speech
+# Install PyTorch first (required for flash_attn)
+echo "Installing PyTorch (required for other packages)..."
+pip install torch
 
-# Some versions of vllm might be buggy, install a stable version
+# Install stable vllm version (needed by orpheus-speech)
 echo "Installing stable vllm version..."
 pip install vllm==0.7.3
 
+# Install dependencies
+echo "Installing orpheus-speech package..."
+pip install orpheus-speech
+
 # Install additional packages that might be needed for training/finetuning
 echo "Installing additional packages for development..."
-pip install transformers datasets wandb trl flash_attn torch
+pip install transformers datasets wandb trl
 
 # Install Flask and related packages
 echo "Installing Flask and related packages..."
