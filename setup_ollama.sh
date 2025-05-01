@@ -7,30 +7,26 @@ echo "Setting up Orpheus TTS with Ollama..."
 
 # Check if Ollama is installed
 if ! command -v ollama &> /dev/null; then
-    echo "Ollama is not installed. Installing it now..."
-    curl -fsSL https://ollama.com/install.sh | sh
-    
-    # Check if installation was successful
-    if ! command -v ollama &> /dev/null; then
-        echo "Failed to install Ollama. Please install it manually:"
-        echo "Visit https://ollama.ai/download for installation instructions"
-        exit 1
-    else
-        echo "Ollama installed successfully!"
-    fi
-else
-    echo "Ollama is already installed."
+    echo "Ollama is not installed. Please install Ollama first:"
+    echo "Visit https://ollama.ai/download for installation instructions"
+    exit 1
 fi
 
-# Check for GPU detection tools
-if ! command -v lspci &> /dev/null || ! command -v lshw &> /dev/null; then
-    echo "Installing GPU detection tools..."
-    apt-get update && apt-get install -y pciutils lshw || {
-        echo "Warning: Could not install GPU detection tools. GPU might not be detected properly."
-    }
-fi
+# Create Modelfile for Orpheus
+echo "Creating Modelfile for Orpheus..."
+cat > Modelfile << EOL
+FROM orpheus-tts-0.1-finetune-prod
 
-# Start Ollama service
+# Set parameters for optimal TTS generation
+PARAMETER temperature 0.6
+PARAMETER top_p 0.9
+PARAMETER repeat_penalty 1.1
+EOL
+
+# Create the Ollama model
+echo "Creating Orpheus model in Ollama..."
+ollama create orpheus -f Modelfile
+
 echo "Starting Ollama service..."
 ollama serve &
 OLLAMA_PID=$!
@@ -39,21 +35,12 @@ OLLAMA_PID=$!
 echo "Waiting for Ollama to start..."
 sleep 5
 
-# Test GPU detection
-echo "Checking GPU availability for Ollama..."
-if nvidia-smi &> /dev/null; then
-    echo "NVIDIA GPU detected and accessible."
-else
-    echo "Warning: NVIDIA GPU not detected or not accessible."
-    echo "Ollama will run in CPU mode, which will be very slow for TTS."
-    echo "Ensure your container has GPU access with --gpus all flag."
-fi
+echo "Pulling the Orpheus model (this may take some time)..."
+# Start downloading the model
+ollama pull orpheus-tts-0.1-finetune-prod
 
 echo ""
-echo "Setup complete! Ollama is running without any models."
-echo ""
-echo "To download the Orpheus model, you can run:"
-echo "ollama pull orpheus-tts-0.1-finetune-prod"
+echo "Setup complete! Ollama is running with the Orpheus model."
 echo ""
 echo "To use the TTS service, start the Flask app with:"
 echo "./run_server.sh"
